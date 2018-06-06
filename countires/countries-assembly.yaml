@@ -1,0 +1,68 @@
+apiVerion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: countries
+  namespace: countries
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: countries
+    spec:
+      containers:
+      - name: countries
+        image: bihanc/counties
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+         httpGet:
+          path: /health/live
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 15
+         timeoutSeconds: 10
+        readinessProbe:
+         httpGet:
+          path: /health/ready
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 5
+         timeoutSeconds: 10
+         periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: countries
+  namespace: countries
+  labels:
+    app: countries
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8080
+  selector:
+    app: countries
+
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingress
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: countries.test.com
+    http:
+      paths:
+      - path: /countries
+        backend:
+          serviceName: countries
+          servicePort: 8000
+

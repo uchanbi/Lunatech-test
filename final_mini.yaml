@@ -1,0 +1,325 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+  labels:
+    name: ingress-nginx
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: countries
+  labels:
+    name: countries
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: airports
+  labels:
+    name: airports
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: jenkins
+  labels:
+    name: jenkins
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: nginx-ingress-controller
+  namespace: ingress-nginx
+spec:
+  replicas: 1
+  revisionHistoryLimit: 3
+  template:
+    metadata:
+      labels:
+        k8s-app: nginx-ingress-lb
+    spec:
+      containers:
+        - args:
+            - /nginx-ingress-controller
+            - "--default-backend-service=countries/countries-app"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          image: "quay.io/kubernetes-ingress-controller/nginx-ingress-controller:0.15.0"
+#          livenessProbe:
+#            httpGet:
+#              path: /
+#              port: 8000
+#              scheme: HTTP
+#            initialDelaySeconds: 50
+#            timeoutSeconds: 50
+          name: nginx-ingress-controller
+          ports:
+            - containerPort: 80
+              name: http
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-ingress
+  namespace: ingress-nginx
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+  selector:
+    k8s-app: nginx-ingress-lb
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: airports-app
+  namespace: airports
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: airports-app
+    spec:
+      containers:
+      - name: airports-app
+        image: bihanc/airport
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+         httpGet:
+          path: /health/live
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 15
+         timeoutSeconds: 10
+        readinessProbe:
+         httpGet:
+          path: /health/ready
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 5
+         timeoutSeconds: 10
+         periodSeconds: 10
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: airports-app
+  namespace: airports
+  labels:
+    app: airports-app
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8080
+  selector:
+    app: airports-app
+
+---
+
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: ingressaiport
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: airport.test.com
+    http:
+      paths:
+      - path: /airports
+        backend:
+          serviceName: airports-app
+          servicePort: 8000
+  - host: countries.test.com
+    http:
+      paths:
+      - path: /countries
+        backend:
+          serviceName: countries-app
+          servicePort: 8000
+  - host: jenkins.test.com
+    http:
+      paths:
+      - path: /jenkins
+        backend:
+          serviceName: jenkins
+          servicePort: 8080
+
+
+
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: countries-app
+  namespace: countries
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: countries
+    spec:
+      containers:
+      - name: countries
+        image: bihanc/counties
+        ports:
+        - containerPort: 8080
+        livenessProbe:
+         httpGet:
+          path: /health/live
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 15
+         timeoutSeconds: 10
+        readinessProbe:
+         httpGet:
+          path: /health/ready
+          port: 8080
+          httpHeaders:
+          - name: X-Custom-Header
+            value: Awesome
+         initialDelaySeconds: 5
+         timeoutSeconds: 10
+         periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: countries-app
+  namespace: countries
+  labels:
+    app: countries-app
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8080
+  selector:
+    app: countries-app
+
+
+---
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: jenkins
+  namespace: jenkins
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: jenkins
+    spec:
+      containers:
+        - name: jenkins
+          image: bihanc/jenkins
+          securityContext:
+           privileged: true
+          env:
+            - name: JAVA_OPTS
+              value: -Djenkins.install.runSetupWizard=false
+          ports:
+            - name: http-port
+              containerPort: 8080
+            - name: jnlp-port
+              containerPort: 50000
+          volumeMounts:
+            - name: jenkins-home
+              mountPath: /var/jenkins_home
+          volumeMounts:
+            - mountPath: /var/run/docker.sock
+              name: docker-sock-volume
+      volumes:
+        - name: jenkins-home
+          emptyDir: {}
+        - name: docker-sock-volume
+          hostPath:
+           path: /var/run/docker.sock
+           type: File
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: jenkins
+spec:
+  type: NodePort
+  ports:
+    - port: 8080
+      targetPort: 8080
+  selector:
+    app: jenkins
+---
+
+kind: NetworkPolicy
+apiVersion: extensions/v1beta1
+metadata:
+  name: allow-external-countries
+  namespace: countries
+spec:
+  podSelector:
+    matchLabels:
+      app: countries
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: jenkins
+          name: ingress-nginx
+          name: countries
+    ports:
+    - protocol: TCP
+      port: 8000
+      port: 8080
+      port: 80
+---
+
+kind: NetworkPolicy
+apiVersion: extensions/v1beta1
+metadata:
+  name: allow-external-airports
+  namespace: airports
+spec:
+  podSelector:
+    matchLabels:
+      app: airports
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: jenkins
+          name: nginx-ingress-lb
+          name: airports-app
+    ports:
+    - protocol: TCP
+      port: 8000
+      port: 8080
+      port: 80
+
+
+
